@@ -2,90 +2,92 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "PAI 文档",
-  "logo": {
-    "dark": "/logo/dark.svg",
-    "light": "/logo/light.svg"
-  },
   "favicon": "/favicon.svg",
   "colors": {
     "primary": "#6366f1",
     "light": "#818cf8",
     "dark": "#4f46e5"
   },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "文档",
+        "groups": [
+          {
+            "group": "开始",
+            "pages": [
+              "introduction",
+              "getting-started/quickstart",
+              "getting-started/configuration"
+            ]
+          },
+          {
+            "group": "架构",
+            "pages": [
+              "architecture/overview",
+              "architecture/multi-node-router",
+              "architecture/graph-workflow"
+            ]
+          },
+          {
+            "group": "核心能力",
+            "pages": [
+              "core/memory-system",
+              "core/tool-system",
+              "core/skill-system",
+              "core/ledger",
+              "core/schedule",
+              "core/image-recognition"
+            ]
+          },
+          {
+            "group": "平台接入",
+            "pages": [
+              "platforms/overview",
+              "platforms/telegram",
+              "platforms/wechat",
+              "platforms/qq",
+              "platforms/feishu",
+              "platforms/miniapp",
+              "platforms/web"
+            ]
+          },
+          {
+            "group": "部署运维",
+            "pages": [
+              "deployment/docker",
+              "deployment/production"
+            ]
+          },
+          {
+            "group": "更新日志",
+            "pages": [
+              "changelog"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API 参考",
+        "groups": [
+          {
+            "group": "API 参考",
+            "pages": [
+              "api/overview",
+              "api/authentication",
+              "api/client-api",
+              "api/admin-api",
+              "api/websocket"
+            ]
+          }
+        ]
+      }
+    ]
+  },
   "topbarLinks": [
     {
       "name": "GitHub",
       "url": "https://github.com/Lsogod/personal-ai-pai"
-    }
-  ],
-  "tabs": [
-    {
-      "name": "API 参考",
-      "url": "api"
-    }
-  ],
-  "navigation": [
-    {
-      "group": "开始",
-      "pages": [
-        "introduction",
-        "getting-started/quickstart",
-        "getting-started/configuration"
-      ]
-    },
-    {
-      "group": "架构",
-      "pages": [
-        "architecture/overview",
-        "architecture/multi-node-router",
-        "architecture/graph-workflow"
-      ]
-    },
-    {
-      "group": "核心能力",
-      "pages": [
-        "core/memory-system",
-        "core/tool-system",
-        "core/skill-system",
-        "core/ledger",
-        "core/schedule",
-        "core/image-recognition"
-      ]
-    },
-    {
-      "group": "平台接入",
-      "pages": [
-        "platforms/overview",
-        "platforms/telegram",
-        "platforms/wechat",
-        "platforms/qq",
-        "platforms/feishu",
-        "platforms/miniapp",
-        "platforms/web"
-      ]
-    },
-    {
-      "group": "部署运维",
-      "pages": [
-        "deployment/docker",
-        "deployment/production"
-      ]
-    },
-    {
-      "group": "API 参考",
-      "pages": [
-        "api/overview",
-        "api/authentication",
-        "api/client-api",
-        "api/admin-api",
-        "api/websocket"
-      ]
-    },
-    {
-      "group": "更新日志",
-      "pages": [
-        "changelog"
-      ]
     }
   ],
   "footerSocials": {
