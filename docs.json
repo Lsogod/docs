@@ -1,5 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
   "name": "PAI 文档",
   "logo": {
     "dark": "/logo/dark.svg",
@@ -9,11 +10,7 @@
   "colors": {
     "primary": "#6366f1",
     "light": "#818cf8",
-    "dark": "#4f46e5",
-    "anchors": {
-      "from": "#6366f1",
-      "to": "#a78bfa"
-    }
+    "dark": "#4f46e5"
   },
   "topbarLinks": [
     {
@@ -25,13 +22,6 @@
     {
       "name": "API 参考",
       "url": "api"
-    }
-  ],
-  "anchors": [
-    {
-      "name": "GitHub",
-      "icon": "github",
-      "url": "https://github.com/Lsogod/personal-ai-pai"
     }
   ],
   "navigation": [
