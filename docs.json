@@ -26,6 +26,7 @@
             "pages": [
               "architecture/overview",
               "architecture/multi-node-router",
+              "architecture/single-agent",
               "architecture/graph-workflow"
             ]
           },
