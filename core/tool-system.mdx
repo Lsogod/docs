@@ -544,6 +544,176 @@ await query_user_profile_tool.ainvoke({})
 | `error` | 错误信息 |
 | `user_id / platform / conversation_id` | 调用上下文 |
 
+## 参数与返回速查
+
+### 时间与联网
+
+| 工具 | 必填参数 | 可选参数 | 典型返回 |
+|------|----------|----------|----------|
+| `now_time` | 无 | `timezone` | 当前时间文本 |
+| `web_search` | `query` | `focus`, `max_results` | `status`, `answer_ready`, `sources[]`, `summary` |
+| `bing_search` | `query` | `count`, `offset` | MCP 搜索结果文本 |
+| `crawl_webpage` | `uuid`, `url` | 无 | 网页正文文本 |
+| `fetch_url` | `url` | `max_length`, `start_index`, `raw` | 当前分支默认返回禁用提示 |
+| `mcp_list_tools` | 无 | 无 | MCP 工具列表文本 |
+| `mcp_call_tool` | `tool_name` | `arguments_json` | 目标 MCP 工具原始输出 |
+| `maps_weather` | `city` 或 `adcode` 至少一个 | 无 | 天气文本或 JSON 文本 |
+
+### 视觉
+
+| 工具 | 必填参数 | 可选参数 | 典型返回 |
+|------|----------|----------|----------|
+| `analyze_image` | 无 | `question`, `image_index` | `image_kind`, `answer`, `summary`, `ocr_text`, `confidence` |
+| `analyze_receipt` | `image_ref` | 无 | `image_type`, `amount`, `merchant`, `category`, `item`, `confidence` |
+
+### 账单
+
+| 工具 | 必填参数 | 可选参数 | 典型返回 |
+|------|----------|----------|----------|
+| `ledger_text2sql` | `message` | `conversation_context` | 查询文本或结构化 JSON |
+| `ledger_insert` | `amount`, `category`, `item` | `transaction_date`, `image_url` | 单条账单 JSON |
+| `ledger_update` | `ledger_id` | `amount`, `category`, `item`, `transaction_date` | 更新后的账单 JSON |
+| `ledger_delete` | `ledger_id` | 无 | 被删除账单快照 JSON |
+| `ledger_get_latest` | 无 | 无 | 最新账单 JSON |
+| `ledger_list_recent` | 无 | `limit` | 近期账单数组 |
+| `ledger_list` | 无 | `limit`, `start_at`, `end_at`, `category`, `item_like`, `order`, `ledger_ids` | 账单数组 |
+
+### 会话
+
+| 工具 | 必填参数 | 可选参数 | 典型返回 |
+|------|----------|----------|----------|
+| `conversation_current` | 无 | 无 | 当前会话 JSON |
+| `conversation_list` | 无 | `limit` | 会话数组，含 `active` 标记 |
+
+### 记忆
+
+| 工具 | 必填参数 | 可选参数 | 典型返回 |
+|------|----------|----------|----------|
+| `memory_list` | 无 | `limit` | 长期记忆数组 |
+| `memory_save` | `content` | `memory_type`, `importance`, `confidence`, `ttl_days`, `key` | `status=saved` 的结果 JSON |
+| `memory_append` | `content` | `memory_id`, `memory_key`, `target_hint`, `memory_type`, `separator`, `importance`, `confidence`, `ttl_days` | `status=appended/unchanged` |
+| `memory_delete` | 无 | `memory_id`, `memory_key`, `target_hint`, `memory_type` | `status=deleted` |
+
+### 日程
+
+| 工具 | 必填参数 | 可选参数 | 典型返回 |
+|------|----------|----------|----------|
+| `schedule_insert` | `content`, `trigger_time` | `status`, `job_id` | 单条日程 JSON |
+| `schedule_update` | `schedule_id` | `content`, `trigger_time`, `status` | 更新后的日程 JSON |
+| `schedule_delete` | `schedule_id` | 无 | 被删除日程快照 JSON |
+| `schedule_get_latest` | 无 | 无 | 最新日程 JSON |
+| `schedule_list_recent` | 无 | `limit` | 近期日程数组 |
+| `schedule_list` | 无 | `status`, `start_at`, `end_at`, `limit`, `content_like`, `order`, `schedule_ids` | 日程数组 |
+
+### 用户档案
+
+| 工具 | 必填参数 | 可选参数 | 典型返回 |
+|------|----------|----------|----------|
+| `update_user_profile` | 无 | `nickname`, `ai_name`, `ai_emoji` | 更新结果文本 |
+| `query_user_profile` | 无 | 无 | 用户档案文本 |
+
+## 端到端组合示例
+
+### 1. 图片记账
+
+```python
+# 第一步：识别支付截图/小票
+receipt = await analyze_receipt_tool.ainvoke({
+    "image_ref": "https://example.com/receipt.jpg",
+})
+
+# 假设识别结果:
+# {
+#   "amount": 32.0,
+#   "category": "餐饮",
+#   "item": "咖啡",
+#   "confidence": 0.93
+# }
+
+# 第二步：写入账单
+ledger = await ledger_insert_tool.ainvoke({
+    "amount": 32.0,
+    "category": "餐饮",
+    "item": "咖啡",
+    "image_url": "https://example.com/receipt.jpg",
+})
+```
+
+### 2. 先查最近提醒，再修改时间
+
+```python
+# 第一步：先查最近提醒
+recent = await schedule_list_recent_tool.ainvoke({"limit": 5})
+
+# 第二步：拿到目标 schedule_id 后更新
+updated = await schedule_update_tool.ainvoke({
+    "schedule_id": 45,
+    "trigger_time": "2026-04-07 10:00:00",
+    "status": "PENDING",
+})
+```
+
+### 3. 显式记住一个长期偏好
+
+```python
+saved = await memory_save_tool.ainvoke({
+    "content": "我喜欢无糖乌龙茶",
+    "memory_type": "preference",
+    "importance": 4,
+    "ttl_days": 365,
+    "key": "drink_preference",
+})
+
+# 后续查询
+memories = await memory_list_tool.ainvoke({"limit": 20})
+```
+
+### 4. 联网搜索后用来源回答
+
+```python
+search_result = await web_search_tool.ainvoke({
+    "query": "2026 款 Model Y 上市时间",
+    "focus": "官方发布",
+    "max_results": 5,
+})
+
+# 典型判断逻辑
+# if search_result["answer_ready"]:
+#     使用 sources 里的 snippet / content_preview 组织最终回答
+# else:
+#     说明当前结果不足，或者继续补检索
+```
+
+### 5. 查账后修正某一条记录
+
+```python
+# 先筛出记录
+rows = await ledger_list_tool.ainvoke({
+    "start_at": "2026-04-01",
+    "end_at": "2026-04-30",
+    "item_like": "咖啡",
+    "limit": 20,
+})
+
+# 再按 id 更新
+updated = await ledger_update_tool.ainvoke({
+    "ledger_id": 123,
+    "amount": 28,
+    "item": "咖啡",
+})
+```
+
+## 常见错误与边界
+
+| 场景 | 表现 | 原因 |
+|------|------|------|
+| `analyze_image` 没有图片 | `当前消息没有可分析的图片。` | 运行时上下文里没有 `image_urls` |
+| `fetch_url` 调用失败 | 提示该工具已禁用 | 当前分支要求优先用 `web_search` / MCP 搜索工具 |
+| `schedule_insert` 时间解析失败 | 返回 `无法解析 trigger_time` | 时间格式不符合解析规则 |
+| MCP 工具被拦截 | 返回 allowlist blocked | 工具名不在 allowlist 中 |
+| 搜索次数超限 | 返回本轮调用上限提示 | `main_agent` 每轮有 MCP 调用计数限制 |
+| 直接执行账单/记忆工具报缺用户信息 | `missing required arg: user_id` | 不是通过带上下文的 Agent 调用，或者缺少用户上下文 |
+
 ## 典型返回结构
 
 ### `web_search`
