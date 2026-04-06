@@ -81,6 +81,48 @@ LLM function call
 - `mcp_list_tools` / `mcp_call_tool` 在执行器内部会映射到 builtin 名称 `tool_list` / `tool_call`。
 - `update_user_profile` / `query_user_profile` 是特例：它们直接在 `langchain_tools.py` 中实现，不经过 `tool_executor.py`。
 
+### LLM 实际输出的参数是什么
+
+这里最容易误解的一点是：LLM 输出的不是 `execute_capability(...)` 的完整参数，而只是对应工具 schema 里的业务参数。
+
+例如对 `ledger_insert` 来说，LLM 输出的大致会是：
+
+```json
+{
+  "amount": 32,
+  "category": "餐饮",
+  "item": "午饭",
+  "transaction_date": "",
+  "image_url": ""
+}
+```
+
+但真正进入执行器时，实际调用是：
+
+```python
+await execute_capability_with_usage(
+    source="builtin",
+    name="ledger_insert",
+    args={
+        "amount": 32,
+        "category": "餐饮",
+        "item": "午饭",
+        "transaction_date": "",
+        "image_url": "",
+    },
+    user_id=context.user_id,
+    platform=context.platform,
+    conversation_id=context.conversation_id,
+)
+```
+
+也就是说：
+
+- LLM 负责给出业务参数
+- `user_id / platform / conversation_id / image_urls`
+  这些上下文不是 LLM 生成的，而是运行时注入的
+- 执行器再根据 `tool_name + args + runtime context` 做真正的数据库/MCP/调度调用
+
 ## 代码模板
 
 ### LangChain 工具包装器长什么样
@@ -219,31 +261,24 @@ async def call_tool(
 
 #### `ledger_text2sql`
 实现：`tool_executor.py` 会把请求交给 `app/tools/ledger_text2sql.py`。这个模块先用 LLM 生成 SQL 计划，再做强约束校验：只能操作 `ledgers` 表、禁止 DDL、`select/update/delete` 必须带 `user_id` 条件、写操作支持“预览影响记录”与“按 id 确认提交”两阶段机制。时间参数还会统一换算到数据库使用的 UTC-naive 格式。  
-示例：`ledger_text2sql({"message": "这个月餐饮花了多少", "conversation_context": ""})`
 
 #### `ledger_insert`
 实现：`tool_executor.py` 解析金额、分类、条目和时间后，调用 `app/tools/finance.py` 的 `insert_ledger()` 插入 `Ledger` 行，并写审计日志。若未给时间，默认使用当前时间。  
-示例：`ledger_insert({"amount": 32, "category": "餐饮", "item": "午饭"})`
 
 #### `ledger_update`
 实现：执行器会先校验 `ledger_id` 和用户归属，再调用 `finance.py` 的 `update_ledger()`；只更新传入的字段，最后返回更新后的账单行 JSON。  
-示例：`ledger_update({"ledger_id": 123, "amount": 28, "item": "咖啡"})`
 
 #### `ledger_delete`
 实现：执行器按 `ledger_id` 找到账单后，调用 `finance.py` 的 `delete_ledger()` 删除，并把删除前的快照作为返回值。  
-示例：`ledger_delete({"ledger_id": 123})`
 
 #### `ledger_get_latest`
 实现：通过 SQLAlchemy 查询当前用户 `id desc limit 1` 的账单记录；没有记录时返回空 JSON。  
-示例：`ledger_get_latest({})`
 
 #### `ledger_list_recent`
 实现：调用 `finance.py` 的 `list_recent_ledgers()`，按主键倒序返回最近 N 条记录；适合“最近几笔”，不适合“今天/本月”这类区间查询。  
-示例：`ledger_list_recent({"limit": 10})`
 
 #### `ledger_list`
 实现：执行器直接拼 SQLAlchemy 查询，可按 `ledger_ids`、`start_at`、`end_at`、`category`、`item_like`、`order` 组合筛选；如果 `end_at` 只给日期，会自动补成次日零点实现左闭右开区间。  
-示例：`ledger_list({"start_at": "2026-04-01", "end_at": "2026-04-30", "category": "餐饮", "limit": 100})`
 
 #### 实现分层
 
@@ -392,6 +427,169 @@ if end_at is not None:
 
 也就是说，账单工具除了改数据库，还内置了审计轨迹。
 
+#### 参数 -> 执行 -> 后续
+
+##### `ledger_insert`
+
+LLM 输出参数：
+
+```json
+{
+  "amount": 32,
+  "category": "餐饮",
+  "item": "午饭",
+  "transaction_date": "",
+  "image_url": ""
+}
+```
+
+LangChain 工具签名：
+
+```python
+@tool("ledger_insert")
+async def ledger_insert_tool(
+    amount: float,
+    category: str,
+    item: str,
+    transaction_date: str = "",
+    image_url: str = "",
+    *,
+    runtime: ToolRuntime[AgentToolContext],
+) -> str:
+    return await _run_tool(...)
+```
+
+执行器读取参数并执行：
+
+```python
+if tool_l == "ledger_insert":
+    uid = _resolve_user_id(params.get("user_id", user_id))
+    amount = float(params.get("amount"))
+    category = str(params.get("category") or "其他").strip() or "其他"
+    item = str(params.get("item") or "消费").strip() or "消费"
+    transaction_date = _parse_utc_naive_arg(params.get("transaction_date")) or datetime.utcnow()
+    image_url = str(params.get("image_url") or "").strip() or None
+
+    row = await insert_ledger(
+        session=get_session(),
+        user_id=uid,
+        amount=amount,
+        category=category,
+        item=item,
+        transaction_date=transaction_date,
+        image_url=image_url,
+        platform=platform,
+    )
+```
+
+后续动作：
+
+- `insert_ledger()` 写入 `ledgers` 表
+- `commit + refresh`
+- 尝试写 `audit.log_event(...)`
+- 组装 `_ledger_to_payload(row)` 返回给 Agent
+
+##### `ledger_text2sql`
+
+LLM 输出参数在不同模式下不同。
+
+读查询时常见是：
+
+```json
+{
+  "message": "这个月餐饮花了多少",
+  "conversation_context": ""
+}
+```
+
+预览批量写时常见是：
+
+```json
+{
+  "message": "把上周所有交通类改成出行",
+  "mode": "preview_write",
+  "operation": "update",
+  "preview_limit": 50,
+  "update_fields": {
+    "category": "出行"
+  }
+}
+```
+
+确认提交时常见是：
+
+```json
+{
+  "mode": "commit_write_by_ids",
+  "operation": "update",
+  "target_ids": [101, 102, 108],
+  "expected_count": 3,
+  "update_fields": {
+    "category": "出行"
+  }
+}
+```
+
+执行入口：
+
+```python
+if tool_l == "ledger_text2sql":
+    mode = str(params.get("mode") or "execute").strip().lower()
+    if mode == "preview_write":
+        output_data = await plan_write_preview_text2sql(...)
+        return _result(...)
+    if mode == "commit_write_by_ids":
+        output_data = await commit_write_by_ids_text2sql(...)
+        return _result(...)
+
+    output = await try_execute_ledger_text2sql(...)
+    return _result(True, output=str(output or ""))
+```
+
+后续动作：
+
+- `try_execute_ledger_text2sql()` 会先让 LLM 生成 SQL 计划
+- `_is_safe_sql()` 等护栏会校验 SQL 是否安全
+- 读查询直接执行并返回结果
+- 写查询先走预览，再按确认过的 id 提交
+
+##### `ledger_list`
+
+LLM 输出参数通常是显式筛选条件：
+
+```json
+{
+  "limit": 100,
+  "start_at": "2026-04-01",
+  "end_at": "2026-04-30",
+  "category": "餐饮",
+  "item_like": "咖啡",
+  "order": "desc",
+  "ledger_ids": []
+}
+```
+
+执行入口：
+
+```python
+if tool_l == "ledger_list":
+    stmt = select(Ledger).where(Ledger.user_id == uid)
+    ...
+    if start_at is not None:
+        stmt = stmt.where(Ledger.transaction_date >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(Ledger.transaction_date < end_at)
+    ...
+    result = await session.execute(stmt)
+    rows = list(result.scalars().all())
+```
+
+后续动作：
+
+- 执行器把 SQLAlchemy 结果转成 `[_ledger_to_payload(...)]`
+- 返回给 Agent 的是结构化账单数组
+- 不会触发额外写操作或调度动作
+
 ### 会话工具
 
 #### `conversation_current`
@@ -426,27 +624,21 @@ if end_at is not None:
 
 #### `schedule_insert`
 实现：执行器会校验 `content`，再把 `trigger_time` 解析成系统时区下的本地时间；随后写入 `Schedule` 表，并在状态为 `PENDING` 时通过 `scheduler.add_job()` 注册 APScheduler 单次任务，触发时执行 `send_reminder_job`。  
-示例：`schedule_insert({"content": "提醒我开会", "trigger_time": "2026-04-07 09:30:00"})`
 
 #### `schedule_update`
 实现：先读取原日程，再按传入字段覆盖；随后无论是否改时间，都会先尝试移除旧的 APScheduler job，如果更新后状态仍是 `PENDING`，则重新注册新 job。  
-示例：`schedule_update({"schedule_id": 45, "trigger_time": "2026-04-07 10:00:00", "status": "PENDING"})`
 
 #### `schedule_delete`
 实现：删除前先移除 APScheduler job，再清理 `ReminderDelivery` 记录，最后删除 `Schedule` 行。  
-示例：`schedule_delete({"schedule_id": 45})`
 
 #### `schedule_get_latest`
 实现：按 `id desc limit 1` 读取当前用户最近创建的一条日程，没有则返回空 JSON。  
-示例：`schedule_get_latest({})`
 
 #### `schedule_list_recent`
 实现：按主键倒序读取最近 N 条日程记录，适合“最近几条提醒”的场景。  
-示例：`schedule_list_recent({"limit": 10})`
 
 #### `schedule_list`
 实现：执行器直接构造 SQLAlchemy 查询，可按 `schedule_ids`、`status`、`start_at`、`end_at`、`content_like`、`order` 过滤；状态参数还支持中英文别名，如 `已完成 -> EXECUTED`、`待办 -> PENDING`。  
-示例：`schedule_list({"status": "PENDING", "start_at": "2026-04-01", "end_at": "2026-04-30", "order": "asc"})`
 
 #### 实现分层
 
@@ -588,6 +780,158 @@ await session.commit()
 ```
 
 这样做是为了把“提醒定义”和“提醒投递历史”一起清干净，避免数据库里留下悬空投递记录。
+
+#### 参数 -> 执行 -> 后续
+
+##### `schedule_insert`
+
+LLM 输出参数：
+
+```json
+{
+  "content": "提醒我开会",
+  "trigger_time": "2026-04-07 09:30:00",
+  "status": "PENDING",
+  "job_id": ""
+}
+```
+
+LangChain 工具签名：
+
+```python
+@tool("schedule_insert")
+async def schedule_insert_tool(
+    content: str,
+    trigger_time: str,
+    status: str = "PENDING",
+    job_id: str = "",
+    *,
+    runtime: ToolRuntime[AgentToolContext],
+) -> str:
+    return await _run_tool(...)
+```
+
+执行入口：
+
+```python
+if tool_l == "schedule_insert":
+    content = str(params.get("content") or "").strip()
+    raw_trigger = str(params.get("trigger_time") or "").strip()
+    trigger_time = _parse_local_naive_arg(raw_trigger)
+    status = str(params.get("status") or "PENDING").strip().upper() or "PENDING"
+    job_id = str(params.get("job_id") or "").strip() or str(uuid4())
+    ...
+```
+
+后续动作：
+
+- 写入 `Schedule` 表
+- `flush()` 拿到 `schedule.id`
+- 如果状态是 `PENDING`，调用 `scheduler.add_job(...)`
+- `commit + refresh`
+- 返回 `_schedule_to_payload(row)`
+
+##### `schedule_update`
+
+LLM 输出参数：
+
+```json
+{
+  "schedule_id": 45,
+  "content": "",
+  "trigger_time": "2026-04-07 10:00:00",
+  "status": "PENDING"
+}
+```
+
+执行入口：
+
+```python
+if tool_l == "schedule_update":
+    schedule_id = _resolve_user_id(params.get("schedule_id"))
+    row = await session.get(Schedule, schedule_id)
+    ...
+    if raw_trigger_upd:
+        trigger_time = _parse_local_naive_arg(raw_trigger_upd)
+        row.trigger_time = trigger_time
+    status_value = _normalize_schedule_status_arg(params.get("status")) or ""
+    if status_value:
+        row.status = status_value
+```
+
+后续动作：
+
+- 读取并校验原提醒是否属于当前用户
+- 更新内容、时间、状态
+- 先移除旧 APScheduler job
+- 如果更新后仍是 `PENDING`，重新注册 job
+- 提交数据库并返回最新 payload
+
+##### `schedule_delete`
+
+LLM 输出参数：
+
+```json
+{
+  "schedule_id": 45
+}
+```
+
+执行入口：
+
+```python
+if tool_l == "schedule_delete":
+    schedule_id = _resolve_user_id(params.get("schedule_id"))
+    row = await session.get(Schedule, schedule_id)
+    ...
+    scheduler.remove_job(str(row.job_id))
+    await session.execute(delete(ReminderDelivery).where(ReminderDelivery.schedule_id == schedule_id))
+    await session.delete(row)
+    await session.commit()
+```
+
+后续动作：
+
+- 从调度器中删除真实定时任务
+- 删除提醒投递记录
+- 删除数据库中的提醒定义
+- 返回被删除前的快照 payload
+
+##### `schedule_list`
+
+LLM 输出参数通常是：
+
+```json
+{
+  "status": "PENDING",
+  "start_at": "2026-04-01",
+  "end_at": "2026-04-30",
+  "limit": 100,
+  "content_like": "开会",
+  "order": "asc",
+  "schedule_ids": []
+}
+```
+
+执行入口：
+
+```python
+if tool_l == "schedule_list":
+    stmt = select(Schedule).where(Schedule.user_id == uid)
+    ...
+    if start_at is not None:
+        stmt = stmt.where(Schedule.trigger_time >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(Schedule.trigger_time < end_at)
+    if status:
+        stmt = stmt.where(Schedule.status == status)
+```
+
+后续动作：
+
+- 按时间窗口、状态、内容等条件筛选提醒
+- 转成 `[_schedule_to_payload(...)]`
+- 只读，不会修改调度器状态
 
 ### 用户档案工具
 
