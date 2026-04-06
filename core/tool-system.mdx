@@ -203,56 +203,6 @@ async def call_tool(
 实现：该工具直接按 `source="mcp"` 执行，`tool_executor.py` 会把它路由到 `get_mcp_maps_client()`，再由 MCP 地图/天气服务完成查询。  
 示例：`maps_weather({"city": "上海"})`
 
-#### 调用代码示例
-
-```python
-# 时间
-await now_time_tool.ainvoke({"timezone": "Asia/Shanghai"})
-# => "Asia/Shanghai 当前时间：2026-04-06 21:30:12"
-
-# 统一联网搜索
-await web_search_tool.ainvoke({
-    "query": "2026 款 Model Y 上市时间",
-    "focus": "官方发布",
-    "max_results": 5,
-})
-# => {"status": "ok", "answer_ready": true, "sources": [...]}
-
-# MCP 原生搜索
-await bing_search_tool.ainvoke({
-    "query": "OpenAI GPT-5.4 发布",
-    "count": 5,
-    "offset": 0,
-})
-
-# 抓取单页正文
-await crawl_webpage_tool.ainvoke({
-    "uuid": "result-1",
-    "url": "https://example.com/news/123",
-})
-
-# 已废弃的 fetch_url
-await fetch_url_tool.ainvoke({
-    "url": "https://example.com",
-    "max_length": 5000,
-    "start_index": 0,
-    "raw": False,
-})
-# => "tool `fetch_url` is disabled..."
-
-# 列出 MCP 工具
-await mcp_list_tools_tool.ainvoke({})
-
-# 转发调用 MCP 工具
-await mcp_call_tool_tool.ainvoke({
-    "tool_name": "maps_weather",
-    "arguments_json": "{\"city\":\"上海\"}",
-})
-
-# 天气查询
-await maps_weather_tool.ainvoke({"city": "上海"})
-```
-
 ### 视觉工具
 
 #### `analyze_image`
@@ -262,30 +212,6 @@ await maps_weather_tool.ainvoke({"city": "上海"})
 #### `analyze_receipt`
 实现：同样由 `vision.py` 执行，但使用的是 `VisionExtraction` 结构化 schema。模型会抽取 `amount`、`merchant`、`category`、`item` 等字段；如果模型没稳定给出金额，代码还会用正则从文本里补提取 `amount_candidates`。  
 示例：`analyze_receipt({"image_ref": "https://example.com/receipt.jpg"})`
-
-#### 调用代码示例
-
-```python
-# 通用图片分析
-await analyze_image_tool.ainvoke({
-    "question": "图里写了什么？",
-    "image_index": 1,
-})
-# => {"image_kind": "document", "answer": "...", "ocr_text": "..."}
-
-# 小票/支付截图解析
-await analyze_receipt_tool.ainvoke({
-    "image_ref": "https://example.com/receipt.jpg",
-})
-# => {
-#      "image_type": "payment_screenshot",
-#      "amount": 32.0,
-#      "merchant": "瑞幸咖啡",
-#      "category": "餐饮",
-#      "item": "咖啡",
-#      "confidence": 0.93
-#    }
-```
 
 ### 账单工具
 
@@ -317,49 +243,6 @@ await analyze_receipt_tool.ainvoke({
 实现：执行器直接拼 SQLAlchemy 查询，可按 `ledger_ids`、`start_at`、`end_at`、`category`、`item_like`、`order` 组合筛选；如果 `end_at` 只给日期，会自动补成次日零点实现左闭右开区间。  
 示例：`ledger_list({"start_at": "2026-04-01", "end_at": "2026-04-30", "category": "餐饮", "limit": 100})`
 
-#### 调用代码示例
-
-```python
-# 复杂自然语言查询
-await ledger_text2sql_tool.ainvoke({
-    "message": "这个月餐饮花了多少",
-    "conversation_context": "",
-})
-
-# 新增账单
-await ledger_insert_tool.ainvoke({
-    "amount": 32,
-    "category": "餐饮",
-    "item": "午饭",
-})
-
-# 更新账单
-await ledger_update_tool.ainvoke({
-    "ledger_id": 123,
-    "amount": 28,
-    "item": "咖啡",
-})
-
-# 删除账单
-await ledger_delete_tool.ainvoke({"ledger_id": 123})
-
-# 查询最新一条
-await ledger_get_latest_tool.ainvoke({})
-
-# 查询最近 10 条
-await ledger_list_recent_tool.ainvoke({"limit": 10})
-
-# 条件查询
-await ledger_list_tool.ainvoke({
-    "start_at": "2026-04-01",
-    "end_at": "2026-04-30",
-    "category": "餐饮",
-    "item_like": "咖啡",
-    "order": "desc",
-    "limit": 100,
-})
-```
-
 ### 会话工具
 
 #### `conversation_current`
@@ -369,18 +252,6 @@ await ledger_list_tool.ainvoke({
 #### `conversation_list`
 实现：先保证 active conversation 存在，再调用 `conversations.py` 的 `list_conversations()` 按最近活跃时间列出会话，并在返回结果里标出 `active`。  
 示例：`conversation_list({"limit": 20})`
-
-#### 调用代码示例
-
-```python
-# 当前会话
-await conversation_current_tool.ainvoke({})
-# => {"id": 7, "title": "默认会话", "active": true, ...}
-
-# 最近会话列表
-await conversation_list_tool.ainvoke({"limit": 20})
-# => [{"id": 7, "title": "...", "active": true}, ...]
-```
 
 ### 记忆工具
 
@@ -399,35 +270,6 @@ await conversation_list_tool.ainvoke({"limit": 20})
 #### `memory_delete`
 实现：同样先定位目标记忆，再删除 PostgreSQL 行；若已有向量索引，还会同步调用 `delete_memory_vectors()` 删除对应向量。  
 示例：`memory_delete({"memory_key": "drink_preference"})`
-
-#### 调用代码示例
-
-```python
-# 列出长期记忆
-await memory_list_tool.ainvoke({"limit": 50})
-
-# 显式保存
-await memory_save_tool.ainvoke({
-    "content": "我喜欢无糖乌龙茶",
-    "memory_type": "preference",
-    "importance": 4,
-    "confidence": 1.0,
-    "ttl_days": 365,
-    "key": "drink_preference",
-})
-
-# 追加到已有记忆
-await memory_append_tool.ainvoke({
-    "memory_key": "drink_preference",
-    "content": "也喜欢美式",
-    "separator": "；",
-})
-
-# 删除记忆
-await memory_delete_tool.ainvoke({
-    "memory_key": "drink_preference",
-})
-```
 
 ### 日程工具
 
@@ -455,43 +297,6 @@ await memory_delete_tool.ainvoke({
 实现：执行器直接构造 SQLAlchemy 查询，可按 `schedule_ids`、`status`、`start_at`、`end_at`、`content_like`、`order` 过滤；状态参数还支持中英文别名，如 `已完成 -> EXECUTED`、`待办 -> PENDING`。  
 示例：`schedule_list({"status": "PENDING", "start_at": "2026-04-01", "end_at": "2026-04-30", "order": "asc"})`
 
-#### 调用代码示例
-
-```python
-# 创建提醒
-await schedule_insert_tool.ainvoke({
-    "content": "提醒我开会",
-    "trigger_time": "2026-04-07 09:30:00",
-    "status": "PENDING",
-})
-
-# 更新提醒
-await schedule_update_tool.ainvoke({
-    "schedule_id": 45,
-    "trigger_time": "2026-04-07 10:00:00",
-    "status": "PENDING",
-})
-
-# 删除提醒
-await schedule_delete_tool.ainvoke({"schedule_id": 45})
-
-# 查询最新一条
-await schedule_get_latest_tool.ainvoke({})
-
-# 查询最近 10 条
-await schedule_list_recent_tool.ainvoke({"limit": 10})
-
-# 条件查询
-await schedule_list_tool.ainvoke({
-    "status": "PENDING",
-    "start_at": "2026-04-01",
-    "end_at": "2026-04-30",
-    "content_like": "开会",
-    "order": "asc",
-    "limit": 100,
-})
-```
-
 ### 用户档案工具
 
 #### `update_user_profile`
@@ -501,22 +306,6 @@ await schedule_list_tool.ainvoke({
 #### `query_user_profile`
 实现：同样直接在 `langchain_tools.py` 查询 `User` 表，并把昵称、助手名称、表情、平台、邮箱拼成文本返回。  
 示例：`query_user_profile({})`
-
-#### 调用代码示例
-
-```python
-# 更新用户档案
-await update_user_profile_tool.ainvoke({
-    "nickname": "老李",
-    "ai_name": "小派",
-    "ai_emoji": "🤖",
-})
-# => "昵称已更新为老李，助手名称已更新为小派，助手表情已更新为🤖。"
-
-# 查询用户档案
-await query_user_profile_tool.ainvoke({})
-# => "昵称：老李\n助手名称：小派\n助手表情：🤖\n平台：telegram\n邮箱：xxx@example.com"
-```
 
 ## MCP 与运行时管理
 
@@ -612,96 +401,205 @@ await query_user_profile_tool.ainvoke({})
 | `update_user_profile` | 无 | `nickname`, `ai_name`, `ai_emoji` | 更新结果文本 |
 | `query_user_profile` | 无 | 无 | 用户档案文本 |
 
-## 端到端组合示例
+## 关键实现片段
 
-### 1. 图片记账
+以下代码片段只展示复杂或有特殊分支的工具；简单 CRUD 工具大多都复用“LangChain 包装器 + `tool_executor.py` 分发”这套模板，不再逐个重复贴。
 
-```python
-# 第一步：识别支付截图/小票
-receipt = await analyze_receipt_tool.ainvoke({
-    "image_ref": "https://example.com/receipt.jpg",
-})
-
-# 假设识别结果:
-# {
-#   "amount": 32.0,
-#   "category": "餐饮",
-#   "item": "咖啡",
-#   "confidence": 0.93
-# }
-
-# 第二步：写入账单
-ledger = await ledger_insert_tool.ainvoke({
-    "amount": 32.0,
-    "category": "餐饮",
-    "item": "咖啡",
-    "image_url": "https://example.com/receipt.jpg",
-})
-```
-
-### 2. 先查最近提醒，再修改时间
+### `web_search` 的搜索回退与正文抓取
 
 ```python
-# 第一步：先查最近提醒
-recent = await schedule_list_recent_tool.ainvoke({"limit": 5})
+# backend/app/services/tool_executor.py
+async def _execute_web_search(query: str, *, focus: str, max_results: int) -> dict[str, Any]:
+    ...
+    if str(settings.web_search_api_url or "").strip() and str(settings.web_search_api_key or "").strip():
+        try:
+            rows, total_results = await _call_web_search_api(search_query, max_results=max_results)
+            rows = _dedupe_search_results(rows)
+            if rows:
+                primary_payload = _build_payload(rows=rows, total_results=total_results)
+                if str(primary_payload.get("status") or "") == "ok":
+                    return primary_payload
+        except Exception as exc:
+            primary_error = str(exc)
 
-# 第二步：拿到目标 schedule_id 后更新
-updated = await schedule_update_tool.ainvoke({
-    "schedule_id": 45,
-    "trigger_time": "2026-04-07 10:00:00",
-    "status": "PENDING",
-})
+    raw = await search_client.call_tool(
+        name="bing_search",
+        arguments={"query": search_query, "count": max(3, min(max_results, 8)), "offset": 0},
+    )
+    _, parsed_rows, total_results = _parse_search_results(raw)
+    ...
+
+    for item in _pick_results_for_crawl(original_query, rows, limit=2):
+        content = await crawl_client.call_tool(
+            name="crawl_webpage",
+            arguments={"uuids": [uuid], "urlMap": {uuid: url}},
+        )
+        ...
 ```
 
-### 3. 显式记住一个长期偏好
+这个实现说明 `web_search` 不是简单调用一个搜索 API，而是：
+
+- 先走主搜索 API
+- 失败后回退到 MCP `bing_search`
+- 必要时再调用 `crawl_webpage`
+- 最后统一整理成 `sources[]`、`status`、`answer_ready`
+
+### `analyze_receipt` 的结构化视觉输出
 
 ```python
-saved = await memory_save_tool.ainvoke({
-    "content": "我喜欢无糖乌龙茶",
-    "memory_type": "preference",
-    "importance": 4,
-    "ttl_days": 365,
-    "key": "drink_preference",
-})
+# backend/app/tools/vision.py
+class VisionExtraction(BaseModel):
+    image_type: str = Field(default="other")
+    amount: float | None = Field(default=None)
+    amount_candidates: list[float] = Field(default_factory=list)
+    merchant: str = Field(default="")
+    category: str = Field(default="其他")
+    item: str = Field(default="")
+    confidence: float = Field(default=0.0)
+    evidence_text: str = Field(default="")
+    notes: str = Field(default="")
 
-# 后续查询
-memories = await memory_list_tool.ainvoke({"limit": 20})
+
+async def analyze_receipt(image_url: str) -> dict[str, Any]:
+    llm = get_llm(model=settings.vision_model, node_name="vision")
+    runnable = llm.with_structured_output(VisionExtraction)
+    ...
+    parsed = await runnable.ainvoke([system, human])
+    ...
+    normalized = _normalize_vision_output(data, json.dumps(data, ensure_ascii=False))
+    return normalized
 ```
 
-### 4. 联网搜索后用来源回答
+这里的关键实现点是：
+
+- 先把图片统一转成 data URL
+- 再让多模态模型按 `VisionExtraction` schema 输出
+- 最后用 `_normalize_vision_output()` 做二次清洗和金额候选补全
+
+### `ledger_text2sql` 的安全护栏
 
 ```python
-search_result = await web_search_tool.ainvoke({
-    "query": "2026 款 Model Y 上市时间",
-    "focus": "官方发布",
-    "max_results": 5,
-})
-
-# 典型判断逻辑
-# if search_result["answer_ready"]:
-#     使用 sources 里的 snippet / content_preview 组织最终回答
-# else:
-#     说明当前结果不足，或者继续补检索
+# backend/app/tools/ledger_text2sql.py
+def _is_safe_sql(sql: str, intent: str, user_message: str) -> tuple[bool, str]:
+    stmt = _strip_single_statement(sql)
+    lower = stmt.lower()
+    if not stmt:
+        return False, "empty_sql"
+    if ";" in stmt:
+        return False, "multi_statement_not_allowed"
+    if _FORBIDDEN_SQL.search(stmt):
+        return False, "forbidden_keyword"
+    if _OTHER_TABLES.search(stmt):
+        return False, "non_ledger_table_detected"
+    if " ledgers" not in f" {lower} ":
+        return False, "must_target_ledgers"
+    ...
 ```
 
-### 5. 查账后修正某一条记录
+`ledger_text2sql` 的实现重点不在“让 LLM 生成 SQL”，而在“生成后如何拦住危险 SQL”：
+
+- 禁止多语句
+- 禁止 `drop/alter/truncate`
+- 禁止访问非 `ledgers` 表
+- `select/update/delete` 强制要求 `user_id` 过滤
+- 写操作支持先预览、后确认提交
+
+### `schedule_insert` 如何把提醒真正挂到调度器
 
 ```python
-# 先筛出记录
-rows = await ledger_list_tool.ainvoke({
-    "start_at": "2026-04-01",
-    "end_at": "2026-04-30",
-    "item_like": "咖啡",
-    "limit": 20,
-})
-
-# 再按 id 更新
-updated = await ledger_update_tool.ainvoke({
-    "ledger_id": 123,
-    "amount": 28,
-    "item": "咖啡",
-})
+# backend/app/services/tool_executor.py
+if tool_l == "schedule_insert":
+    content = str(params.get("content") or "").strip()
+    raw_trigger = str(params.get("trigger_time") or "").strip()
+    trigger_time = _parse_local_naive_arg(raw_trigger)
+    ...
+    row = Schedule(
+        user_id=uid,
+        job_id=job_id,
+        content=content,
+        trigger_time=trigger_time,
+        status=status,
+    )
+    session.add(row)
+    await session.flush()
+    if status == "PENDING":
+        scheduler.add_job(job_id, trigger_time, send_reminder_job, int(row.id or 0))
+    await session.commit()
 ```
+
+对应的调度器实现是：
+
+```python
+# backend/app/services/scheduler.py
+def add_job(self, job_id: str, run_at: datetime, func, *args, **kwargs) -> None:
+    trigger = DateTrigger(run_date=run_at, timezone=self.settings.timezone)
+    self.scheduler.add_job(
+        func,
+        trigger=trigger,
+        id=job_id,
+        args=args,
+        kwargs=kwargs,
+        replace_existing=True,
+    )
+```
+
+也就是说，`schedule_insert` 不是只写数据库，还会同步注册 APScheduler 任务。
+
+### `memory_save` 如何进入长期记忆真值库
+
+```python
+# backend/app/services/tool_executor.py
+if tool_l == "memory_save":
+    processed = await upsert_long_term_memories(
+        session=session,
+        user_id=uid,
+        conversation_id=conversation_id,
+        source_message_id=(source_message_id or None),
+        candidates=[
+            {
+                "op": "save",
+                "memory_type": memory_type,
+                "key": memory_key,
+                "content": content,
+                "importance": importance,
+                "confidence": confidence,
+                "ttl_days": ttl_days,
+            }
+        ],
+        user_text=f"用户明确要求记住：{content}",
+        bypass_refine=True,
+    )
+```
+
+这里说明 `memory_save` 走的是显式写入通道：
+
+- 直接写 PostgreSQL 真值库
+- 标记向量状态为 DIRTY
+- 后续由异步索引 worker 同步 embedding / 向量索引
+
+### `update_user_profile` 为什么是特例
+
+```python
+# backend/app/services/langchain_tools.py
+@tool("update_user_profile")
+async def update_user_profile_tool(...):
+    ...
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        ...
+        if changed:
+            await deactivate_identity_memories_for_user(session, user_id=user_id)
+            session.add(user)
+            await session.commit()
+```
+
+这个工具没有进入统一执行器，而是直接：
+
+- 打开独立 session
+- 修改 `User` 表
+- 清理与身份字段冲突的长期记忆
+
+这也是为什么它和普通 `memory_save` 不能混为一谈。
 
 ## 常见错误与边界
 
