@@ -215,6 +215,8 @@ async def call_tool(
 
 ### 账单工具
 
+#### 工具入口总览
+
 #### `ledger_text2sql`
 实现：`tool_executor.py` 会把请求交给 `app/tools/ledger_text2sql.py`。这个模块先用 LLM 生成 SQL 计划，再做强约束校验：只能操作 `ledgers` 表、禁止 DDL、`select/update/delete` 必须带 `user_id` 条件、写操作支持“预览影响记录”与“按 id 确认提交”两阶段机制。时间参数还会统一换算到数据库使用的 UTC-naive 格式。  
 示例：`ledger_text2sql({"message": "这个月餐饮花了多少", "conversation_context": ""})`
@@ -243,7 +245,7 @@ async def call_tool(
 实现：执行器直接拼 SQLAlchemy 查询，可按 `ledger_ids`、`start_at`、`end_at`、`category`、`item_like`、`order` 组合筛选；如果 `end_at` 只给日期，会自动补成次日零点实现左闭右开区间。  
 示例：`ledger_list({"start_at": "2026-04-01", "end_at": "2026-04-30", "category": "餐饮", "limit": 100})`
 
-#### 账单工具的实现分层
+#### 实现分层
 
 账单工具实际上分成两条实现路径：
 
@@ -258,7 +260,60 @@ async def call_tool(
 - 复杂自然语言请求交给 Text2SQL，但必须经过额外的 SQL 安全校验
 - 读写结果最终都统一序列化成账单 JSON，返回给 Agent
 
-#### `ledger_text2sql` 的 3 种工作模式
+#### 写入链路
+
+单条写操作的入口是：
+
+- `ledger_insert`
+- `ledger_update`
+- `ledger_delete`
+
+这三类请求都先经过 `tool_executor.py` 做参数校验，然后调用 `app/tools/finance.py`：
+
+- `insert_ledger()`
+- `update_ledger()`
+- `delete_ledger()`
+
+`finance.py` 里统一负责：
+
+- 校验 `user_id` 归属
+- 执行 `commit + refresh`
+- 返回标准 `Ledger` 模型快照
+- 尽量写入审计日志
+
+#### 查询链路
+
+账单查询入口分成两类：
+
+- `ledger_get_latest` / `ledger_list_recent`
+  面向简单查询
+- `ledger_list` / `ledger_text2sql`
+  面向条件查询和自然语言查询
+
+其中：
+
+- `ledger_get_latest`
+  是“最新一条”
+- `ledger_list_recent`
+  是“最近 N 条”
+- `ledger_list`
+  是显式条件过滤
+- `ledger_text2sql`
+  是自然语言入口
+
+这样划分之后，Agent 在简单问题上不需要每次都走 LLM 生成 SQL。
+
+#### Text2SQL 流程
+
+`ledger_text2sql` 是账单体系里最复杂的工具，它的实现核心不是“会生成 SQL”，而是“生成之后如何安全地执行”。
+
+它的总体流程可以拆成：
+
+1. LLM 先输出结构化 SQL 计划
+2. 代码层校验 SQL 是否只作用于 `ledgers`
+3. 根据模式决定是直接执行、先预览，还是按确认过的 id 提交
+
+##### `ledger_text2sql` 的 3 种工作模式
 
 | 模式 | 入口 | 用途 | 实现行为 |
 |------|------|------|----------|
@@ -293,7 +348,7 @@ if tool_l == "ledger_text2sql":
 2. 再预览命中记录
 3. 最后按确认过的 id 集合提交
 
-#### 时间字段是怎么处理的
+#### 时间语义
 
 账单时间和日程时间的处理逻辑不一样。账单工具使用 `_parse_utc_naive_arg()`：
 
@@ -303,7 +358,7 @@ if tool_l == "ledger_text2sql":
 
 这套设计主要是为了让账单查询在跨时区时仍然能稳定按“用户本地日期范围”计算。
 
-#### 查询为什么分 `ledger_list_recent` 和 `ledger_list`
+#### 查询窗口与区间语义
 
 - `ledger_list_recent`
   本质是 `id desc limit N`，适合“最近几条”
@@ -326,7 +381,7 @@ if end_at is not None:
 
 这样用户写 `2026-04-01` 到 `2026-04-30` 时，不会因为“结束日期落在零点”漏掉当天的记录。
 
-#### 单条写操作为什么放在 `finance.py`
+#### 审计与返回结构
 
 `insert_ledger()`、`update_ledger()`、`delete_ledger()` 被单独放进 `app/tools/finance.py`，不是为了“金融计算”，而是为了把账单模型的数据库写入和审计记录集中在一起：
 
@@ -367,6 +422,8 @@ if end_at is not None:
 
 ### 日程工具
 
+#### 工具入口总览
+
 #### `schedule_insert`
 实现：执行器会校验 `content`，再把 `trigger_time` 解析成系统时区下的本地时间；随后写入 `Schedule` 表，并在状态为 `PENDING` 时通过 `scheduler.add_job()` 注册 APScheduler 单次任务，触发时执行 `send_reminder_job`。  
 示例：`schedule_insert({"content": "提醒我开会", "trigger_time": "2026-04-07 09:30:00"})`
@@ -391,7 +448,7 @@ if end_at is not None:
 实现：执行器直接构造 SQLAlchemy 查询，可按 `schedule_ids`、`status`、`start_at`、`end_at`、`content_like`、`order` 过滤；状态参数还支持中英文别名，如 `已完成 -> EXECUTED`、`待办 -> PENDING`。  
 示例：`schedule_list({"status": "PENDING", "start_at": "2026-04-01", "end_at": "2026-04-30", "order": "asc"})`
 
-#### 日程工具的实现分层
+#### 实现分层
 
 日程工具不是“只写一张表”，而是同时维护两份状态：
 
@@ -403,7 +460,7 @@ if end_at is not None:
 - 业务数据是否写入成功
 - 调度器里的 job 是否同步更新
 
-#### 状态流转与 `job_id`
+#### 状态模型与 `job_id`
 
 当前实现里，日程记录的核心字段是：
 
@@ -418,7 +475,7 @@ if end_at is not None:
 
 创建时如果没有传 `job_id`，执行器会自动生成一个 UUID。只要状态是 `PENDING`，就会把这条提醒同步注册进调度器。
 
-#### `schedule_insert` 不只是插表
+#### 创建链路
 
 `schedule_insert` 的核心实现是“先落库，再注册 job”：
 
@@ -442,7 +499,7 @@ await session.commit()
 - 需要先拿到数据库里的 `schedule.id`
 - 调度任务触发时会把这个 `schedule.id` 传给 `send_reminder_job`
 
-#### `schedule_update` 为什么先删旧 job 再重建
+#### 更新链路
 
 更新时间、状态或内容时，数据库和调度器必须一致，因此实现上会先尝试移除旧任务，再按新状态决定是否重建：
 
@@ -460,7 +517,17 @@ if str(row.status or "").upper() == "PENDING":
 - 时间改了但旧提醒还在原时间触发
 - 状态已取消，但旧 job 仍然残留在调度器里
 
-#### 时间字段为什么和账单不同
+#### 删除链路
+
+`schedule_delete` 的处理顺序是：
+
+1. 先移除 APScheduler job
+2. 删除提醒的投递记录
+3. 最后删除 `Schedule` 本身
+
+这样做的重点不是“删表行”，而是让数据库和调度器状态一起收敛。
+
+#### 时间语义
 
 日程工具使用的是 `_parse_local_naive_arg()`，不是账单的 `_parse_utc_naive_arg()`：
 
@@ -470,7 +537,7 @@ if str(row.status or "").upper() == "PENDING":
 
 这和账单不同，是因为提醒本质上是“在本地某时刻触发”，而不是做跨时区统计。
 
-#### `schedule_list` 的查询语义
+#### 查询语义
 
 和账单类似，`schedule_list` 也是条件查询入口，但它查询的是 `trigger_time`，而不是交易时间：
 
@@ -500,7 +567,7 @@ SCHEDULE_STATUS_ALIASES = {
 
 这让 Agent 不必先把用户的话严格翻译成内部枚举，查询层自己就能吸收一部分口语输入。
 
-#### 删除提醒时为什么还要清 `ReminderDelivery`
+#### 调度器与投递清理
 
 `schedule_delete` 不只是删一行 `Schedule`：
 
